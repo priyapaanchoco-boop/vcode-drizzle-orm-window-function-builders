@@ -1,6 +1,20 @@
 import { expect, test } from 'vitest';
 
 import { integer, pgTable, QueryBuilder, text } from '~/pg-core';
+import { gelTable, integer as gelInteger, QueryBuilder as GelQueryBuilder, text as gelText } from '~/gel-core';
+import { int as mysqlInt, mysqlTable, QueryBuilder as MySqlQueryBuilder, text as mysqlText } from '~/mysql-core';
+import {
+	int as singlestoreInt,
+	QueryBuilder as SingleStoreQueryBuilder,
+	singlestoreTable,
+	text as singlestoreText,
+} from '~/singlestore-core';
+import {
+	integer as sqliteInteger,
+	QueryBuilder as SQLiteQueryBuilder,
+	sqliteTable,
+	text as sqliteText,
+} from '~/sqlite-core';
 import { eq } from '~/sql/expressions/conditions';
 import { avg, count, max, min, sum } from '~/sql/functions/aggregate';
 import {
@@ -257,10 +271,94 @@ test('frame from must not be after to', () => {
 	).toThrowError(/from.*after.*to/);
 });
 
-test('lag, lead and nth_value numbers must be non-negative integers', () => {
+test('lag, lead and nth_value reject bad numbers', () => {
 	expect(() => lag(employees.salary, -1)).toThrowError(/lag.*non-negative integer/);
 	expect(() => lead(employees.salary, 1.5)).toThrowError(/lead.*non-negative integer/);
-	expect(() => nthValue(employees.salary, -2)).toThrowError(/nthValue.*non-negative integer/);
+	expect(() => nthValue(employees.salary, -2)).toThrowError(/nthValue.*positive integer/);
+	expect(() => nthValue(employees.salary, 0)).toThrowError(/nthValue.*positive integer/);
+});
+
+test('select builder window clause with a named reference', () => {
+	const query = qb.select({ rn: rowNumber().over('w') }).from(employees)
+		.window('w', { partitionBy: employees.department, orderBy: employees.salary })
+		.orderBy(employees.id).toSQL();
+	expect(query.sql).toBe(
+		'select row_number() over "w" from "employees" window "w" as (partition by "employees"."department" order by "employees"."salary") order by "employees"."id"',
+	);
+});
+
+test('multiple named windows and window frames', () => {
+	const query = qb.select({ rn: rowNumber().over('w1'), total: sum(employees.salary).over('w2') })
+		.from(employees)
+		.window('w1', { partitionBy: employees.department })
+		.window('w2', {
+			orderBy: employees.id,
+			frame: { mode: 'rows', from: unboundedPreceding(), to: currentRow() },
+		}).toSQL();
+	expect(query.sql).toBe(
+		'select row_number() over "w1", sum("salary") over "w2" from "employees" window "w1" as (partition by "employees"."department"), "w2" as (order by "employees"."id" rows between unbounded preceding and current row)',
+	);
+});
+
+test('window with no spec renders an empty definition', () => {
+	expect(
+		qb.select({ c: count().over('w') }).from(employees).window('w').toSQL().sql,
+	).toBe('select count(*) over "w" from "employees" window "w" as ()');
+});
+
+test('window names must be non-empty and not only whitespace', () => {
+	expect(() => rowNumber().over('')).toThrowError(/non-empty/);
+	expect(() => rowNumber().over('   ')).toThrowError(/whitespace/);
+	expect(() => qb.select({ rn: rowNumber().over('w') }).from(employees).window(''))
+		.toThrowError(/non-empty/);
+	expect(() => qb.select({ rn: rowNumber().over('w') }).from(employees).window('  '))
+		.toThrowError(/whitespace/);
+});
+
+test('window clause renders in every dialect', () => {
+	const mysqlEmployees = mysqlTable('employees', {
+		id: mysqlInt('id'),
+		department: mysqlText('department'),
+	});
+	expect(
+		new MySqlQueryBuilder().select({ rn: rowNumber().over('w') }).from(mysqlEmployees)
+			.window('w', { partitionBy: mysqlEmployees.department }).toSQL().sql,
+	).toBe(
+		'select row_number() over `w` from `employees` window `w` as (partition by `employees`.`department`)',
+	);
+
+	const sqliteEmployees = sqliteTable('employees', {
+		id: sqliteInteger('id'),
+		department: sqliteText('department'),
+	});
+	expect(
+		new SQLiteQueryBuilder().select({ rn: rowNumber().over('w') }).from(sqliteEmployees)
+			.window('w', { partitionBy: sqliteEmployees.department }).toSQL().sql,
+	).toBe(
+		'select row_number() over "w" from "employees" window "w" as (partition by "employees"."department")',
+	);
+
+	const singlestoreEmployees = singlestoreTable('employees', {
+		id: singlestoreInt('id'),
+		department: singlestoreText('department'),
+	});
+	expect(
+		new SingleStoreQueryBuilder().select({ rn: rowNumber().over('w') }).from(singlestoreEmployees)
+			.window('w', { partitionBy: singlestoreEmployees.department }).toSQL().sql,
+	).toBe(
+		'select row_number() over `w` from `employees` window `w` as (partition by `employees`.`department`)',
+	);
+
+	const gelEmployees = gelTable('employees', {
+		id: gelInteger('id'),
+		department: gelText('department'),
+	});
+	expect(
+		new GelQueryBuilder().select({ rn: rowNumber().over('w') }).from(gelEmployees)
+			.window('w', { partitionBy: gelEmployees.department }).toSQL().sql,
+	).toBe(
+		'select row_number() over "w" from "employees" window "w" as (partition by "employees"."department")',
+	);
 });
 
 test('over does not mutate the base expression', () => {

@@ -19,7 +19,7 @@ import {
 } from '~/relations.ts';
 import type { Name, Placeholder } from '~/sql/index.ts';
 import { and, eq } from '~/sql/index.ts';
-import { Param, type QueryWithTypings, SQL, sql, type SQLChunk } from '~/sql/sql.ts';
+import { buildWindowSpecSQL, Param, type QueryWithTypings, SQL, sql, type SQLChunk } from '~/sql/sql.ts';
 import { SQLiteColumn } from '~/sqlite-core/columns/index.ts';
 import type {
 	AnySQLiteSelectQueryBuilder,
@@ -311,6 +311,7 @@ export abstract class SQLiteDialect {
 			joins,
 			orderBy,
 			groupBy,
+			windows,
 			limit,
 			offset,
 			distinct,
@@ -372,6 +373,15 @@ export abstract class SQLiteDialect {
 
 		const groupBySql = groupByList.length > 0 ? sql` group by ${sql.join(groupByList)}` : undefined;
 
+		const windowSql = windows && windows.length > 0
+			? sql` window ${
+				sql.join(
+					windows.map((w) => sql`${sql.identifier(w.name)} as (${buildWindowSpecSQL(w.spec)})`),
+					sql`, `,
+				)
+			}`
+			: undefined;
+
 		const orderBySql = this.buildOrderBy(orderBy);
 
 		const limitSql = this.buildLimit(limit);
@@ -379,7 +389,7 @@ export abstract class SQLiteDialect {
 		const offsetSql = offset ? sql` offset ${offset}` : undefined;
 
 		const finalQuery =
-			sql`${withSql}select${distinctSql} ${selection} from ${tableSql}${joinsSql}${whereSql}${groupBySql}${havingSql}${orderBySql}${limitSql}${offsetSql}`;
+			sql`${withSql}select${distinctSql} ${selection} from ${tableSql}${joinsSql}${whereSql}${groupBySql}${havingSql}${windowSql}${orderBySql}${limitSql}${offsetSql}`;
 
 		if (setOperators.length > 0) {
 			return this.buildSetOperations(finalQuery, setOperators);

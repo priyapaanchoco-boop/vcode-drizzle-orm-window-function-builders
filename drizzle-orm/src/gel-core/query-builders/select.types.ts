@@ -20,7 +20,7 @@ import type {
 	SelectResult,
 	SetOperator,
 } from '~/query-builders/select.types.ts';
-import type { ColumnsSelection, Placeholder, SQL, SQLWrapper, View } from '~/sql/sql.ts';
+import type { ColumnsSelection, NamedWindow, Placeholder, SQL, SQLWrapper, View } from '~/sql/sql.ts';
 import type { Subquery } from '~/subquery.ts';
 import type { Table, UpdateTableConfig } from '~/table.ts';
 import type { Assume, ValidateShape, ValueOrArray } from '~/utils.ts';
@@ -62,6 +62,7 @@ export interface GelSelectConfig {
 	joins?: GelSelectJoinConfig[];
 	orderBy?: (GelColumn | SQL | SQL.Aliased)[];
 	groupBy?: (GelColumn | SQL | SQL.Aliased)[];
+	windows?: NamedWindow[];
 	lockingClause?: {
 		strength: LockStrength;
 		config: LockConfig;
@@ -229,6 +230,7 @@ export type GelSetOperatorExcludedMethods =
 	| 'where'
 	| 'having'
 	| 'groupBy'
+	| 'window'
 	| 'for';
 
 export type GelSelectWithout<

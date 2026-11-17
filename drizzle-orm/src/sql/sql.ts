@@ -186,6 +186,67 @@ function describeWindowFrameBound(bound: WindowFrameBound): string {
 	}
 }
 
+/**
+ * Named window definition for the select-builder `window` clause.
+ */
+export interface NamedWindow {
+	/** Window name, referenced from `over('name')`. */
+	name: string;
+	/** Window definition. */
+	spec: WindowSpec;
+}
+
+/**
+ * Throws unless `name` is a usable window name.
+ *
+ * @internal
+ */
+export function assertWindowName(helper: string, name: string): void {
+	if (typeof name !== 'string' || name.length === 0) {
+		throw new Error(`${helper}() window name must be a non-empty string, but got ${JSON.stringify(name)}`);
+	}
+	if (name.trim().length === 0) {
+		throw new Error(`${helper}() window name must not be only whitespace, but got ${JSON.stringify(name)}`);
+	}
+}
+
+/**
+ * Renders the inside of an `over (...)` clause or a `window <name> as (...)` definition.
+ *
+ * @internal
+ */
+export function buildWindowSpecSQL(spec: WindowSpec): SQL {
+	const parts: SQL[] = [];
+	const partitionBy = spec.partitionBy;
+	if (partitionBy !== undefined) {
+		const columns = Array.isArray(partitionBy) ? partitionBy : [partitionBy];
+		parts.push(sql`partition by ${sql.join(columns, sql`, `)}`);
+	}
+	const orderBy = spec.orderBy;
+	if (orderBy !== undefined) {
+		const columns = Array.isArray(orderBy) ? orderBy : [orderBy];
+		parts.push(sql`order by ${sql.join(columns, sql`, `)}`);
+	}
+	const frame = spec.frame;
+	if (frame !== undefined) {
+		const { mode, from, to } = frame;
+		if (mode !== 'rows' && mode !== 'range') {
+			throw new Error(`Window frame mode must be 'rows' or 'range', but got ${String(mode)}`);
+		}
+		const [fromRank, fromOffset] = frameBoundOrder(from);
+		const [toRank, toOffset] = frameBoundOrder(to);
+		if (fromRank > toRank || (fromRank === toRank && fromOffset > toOffset)) {
+			throw new Error(
+				`Window frame "from" bound (${describeWindowFrameBound(from)}) must not be after the "to" bound (${
+					describeWindowFrameBound(to)
+				})`,
+			);
+		}
+		parts.push(sql`${sql.raw(mode)} between ${from.getSQL()} and ${to.getSQL()}`);
+	}
+	return sql.join(parts, sql` `);
+}
+
 function mergeQueries(queries: QueryWithTypings[]): QueryWithTypings {
 	const result: QueryWithTypings = { sql: '', params: [] };
 	for (const query of queries) {
@@ -524,37 +585,10 @@ export class SQL<T = unknown> implements SQLWrapper {
 	over(windowNameOrSpec?: string | WindowSpec): SQL<T> {
 		let overClause: SQL;
 		if (typeof windowNameOrSpec === 'string') {
+			assertWindowName('over', windowNameOrSpec);
 			overClause = sql` over ${sql.identifier(windowNameOrSpec)}`;
 		} else {
-			const parts: SQL[] = [];
-			const partitionBy = windowNameOrSpec?.partitionBy;
-			if (partitionBy !== undefined) {
-				const columns = Array.isArray(partitionBy) ? partitionBy : [partitionBy];
-				parts.push(sql`partition by ${sql.join(columns, sql`, `)}`);
-			}
-			const orderBy = windowNameOrSpec?.orderBy;
-			if (orderBy !== undefined) {
-				const columns = Array.isArray(orderBy) ? orderBy : [orderBy];
-				parts.push(sql`order by ${sql.join(columns, sql`, `)}`);
-			}
-			const frame = windowNameOrSpec?.frame;
-			if (frame !== undefined) {
-				const { mode, from, to } = frame;
-				if (mode !== 'rows' && mode !== 'range') {
-					throw new Error(`over() frame mode must be 'rows' or 'range', but got ${String(mode)}`);
-				}
-				const [fromRank, fromOffset] = frameBoundOrder(from);
-				const [toRank, toOffset] = frameBoundOrder(to);
-				if (fromRank > toRank || (fromRank === toRank && fromOffset > toOffset)) {
-					throw new Error(
-						`over() frame "from" bound (${describeWindowFrameBound(from)}) must not be after the "to" bound (${
-							describeWindowFrameBound(to)
-						})`,
-					);
-				}
-				parts.push(sql`${sql.raw(mode)} between ${from.getSQL()} and ${to.getSQL()}`);
-			}
-			overClause = sql` over (${sql.join(parts, sql` `)})`;
+			overClause = sql` over (${buildWindowSpecSQL(windowNameOrSpec ?? {})})`;
 		}
 
 		const result = new SQL<T>([...this.queryChunks, ...overClause.queryChunks]);

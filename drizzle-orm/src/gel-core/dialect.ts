@@ -27,6 +27,7 @@ import {
 } from '~/relations.ts';
 import { and, eq, View } from '~/sql/index.ts';
 import {
+	buildWindowSpecSQL,
 	type DriverValueEncoder,
 	type Name,
 	Param,
@@ -344,6 +345,7 @@ export class GelDialect {
 			joins,
 			orderBy,
 			groupBy,
+			windows,
 			limit,
 			offset,
 			lockingClause,
@@ -396,6 +398,16 @@ export class GelDialect {
 
 		const havingSql = having ? sql` having ${having}` : undefined;
 
+		let windowSql;
+		if (windows && windows.length > 0) {
+			windowSql = sql` window ${
+				sql.join(
+					windows.map((w) => sql`${sql.identifier(w.name)} as (${buildWindowSpecSQL(w.spec)})`),
+					sql`, `,
+				)
+			}`;
+		}
+
 		let orderBySql;
 		if (orderBy && orderBy.length > 0) {
 			orderBySql = sql` order by ${sql.join(orderBy, sql`, `)}`;
@@ -433,7 +445,7 @@ export class GelDialect {
 			lockingClauseSql.append(clauseSql);
 		}
 		const finalQuery =
-			sql`${withSql}select${distinctSql} ${selection} from ${tableSql}${joinsSql}${whereSql}${groupBySql}${havingSql}${orderBySql}${limitSql}${offsetSql}${lockingClauseSql}`;
+			sql`${withSql}select${distinctSql} ${selection} from ${tableSql}${joinsSql}${whereSql}${groupBySql}${havingSql}${windowSql}${orderBySql}${limitSql}${offsetSql}${lockingClauseSql}`;
 
 		if (setOperators.length > 0) {
 			return this.buildSetOperations(finalQuery, setOperators);

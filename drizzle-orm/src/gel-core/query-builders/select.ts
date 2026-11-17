@@ -20,8 +20,8 @@ import type {
 import { QueryPromise } from '~/query-promise.ts';
 import type { RunnableQuery } from '~/runnable-query.ts';
 import { SelectionProxyHandler } from '~/selection-proxy.ts';
-import { SQL, View } from '~/sql/sql.ts';
-import type { ColumnsSelection, Placeholder, Query, SQLWrapper } from '~/sql/sql.ts';
+import { assertWindowName, SQL, View } from '~/sql/sql.ts';
+import type { ColumnsSelection, Placeholder, Query, SQLWrapper, WindowSpec } from '~/sql/sql.ts';
 import { Subquery } from '~/subquery.ts';
 import { Table } from '~/table.ts';
 import { tracer } from '~/tracing.ts';
@@ -805,6 +805,30 @@ export abstract class GelSelectQueryBuilderBase<
 		}
 		this.config.having = having;
 		return this as any;
+	}
+
+	/**
+	 * Adds a named window definition (`window <name> as (...)`) to the query.
+	 *
+	 * The window can then be referenced by name from any `over('<name>')` call in the query.
+	 * This method can be called multiple times to define several windows.
+	 *
+	 * @example
+	 *
+	 * ```ts
+	 * // Rank employees within each department
+	 * await db.select({ rank: rank().over('w') })
+	 *   .from(employees)
+	 *   .window('w', { partitionBy: employees.department, orderBy: desc(employees.salary) });
+	 * ```
+	 */
+	window(name: string, spec?: WindowSpec): this {
+		assertWindowName('window', name);
+		if (!this.config.windows) {
+			this.config.windows = [];
+		}
+		this.config.windows.push({ name, spec: spec ?? {} });
+		return this;
 	}
 
 	/**

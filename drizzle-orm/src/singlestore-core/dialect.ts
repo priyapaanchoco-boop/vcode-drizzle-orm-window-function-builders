@@ -18,7 +18,7 @@ import {
 } from '~/relations.ts';
 import { and, eq } from '~/sql/expressions/index.ts';
 import type { Name, Placeholder, QueryWithTypings, SQLChunk } from '~/sql/sql.ts';
-import { Param, SQL, sql, View } from '~/sql/sql.ts';
+import { buildWindowSpecSQL, Param, SQL, sql, View } from '~/sql/sql.ts';
 import { Subquery } from '~/subquery.ts';
 import { getTableName, getTableUniqueName, Table } from '~/table.ts';
 import { type Casing, orderSelectedFields, type UpdateSet } from '~/utils.ts';
@@ -272,6 +272,7 @@ export class SingleStoreDialect {
 			joins,
 			orderBy,
 			groupBy,
+			windows,
 			limit,
 			offset,
 			lockingClause,
@@ -371,6 +372,15 @@ export class SingleStoreDialect {
 
 		const havingSql = having ? sql` having ${having}` : undefined;
 
+		const windowSql = windows && windows.length > 0
+			? sql` window ${
+				sql.join(
+					windows.map((w) => sql`${sql.identifier(w.name)} as (${buildWindowSpecSQL(w.spec)})`),
+					sql`, `,
+				)
+			}`
+			: undefined;
+
 		const orderBySql = this.buildOrderBy(orderBy);
 
 		const groupBySql = groupBy && groupBy.length > 0 ? sql` group by ${sql.join(groupBy, sql`, `)}` : undefined;
@@ -391,7 +401,7 @@ export class SingleStoreDialect {
 		}
 
 		const finalQuery =
-			sql`${withSql}select${distinctSql} ${selection} from ${tableSql}${joinsSql}${whereSql}${groupBySql}${havingSql}${orderBySql}${limitSql}${offsetSql}${lockingClausesSql}`;
+			sql`${withSql}select${distinctSql} ${selection} from ${tableSql}${joinsSql}${whereSql}${groupBySql}${havingSql}${windowSql}${orderBySql}${limitSql}${offsetSql}${lockingClausesSql}`;
 
 		if (setOperators.length > 0) {
 			return this.buildSetOperations(finalQuery, setOperators);

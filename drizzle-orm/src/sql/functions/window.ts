@@ -249,7 +249,9 @@ export function nthValue<T extends SQLWrapper>(
 	expression: T,
 	n: number,
 ): SQL<(T extends AnyColumn ? T['_']['data'] : string) | null> {
-	assertNonNegativeInteger('nthValue', 'n', n);
+	if (!Number.isInteger(n) || n <= 0) {
+		throw new Error(`nthValue() n must be a positive integer, but got ${String(n)}`);
+	}
 	return sql`nth_value(${expression}, ${sql.raw(String(n))})`.mapWith(
 		is(expression, Column) ? expression : String,
 	) as any;

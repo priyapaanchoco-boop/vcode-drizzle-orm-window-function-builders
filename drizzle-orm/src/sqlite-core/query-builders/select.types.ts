@@ -1,4 +1,4 @@
-import type { ColumnsSelection, Placeholder, SQL, View } from '~/sql/sql.ts';
+import type { ColumnsSelection, NamedWindow, Placeholder, SQL, View } from '~/sql/sql.ts';
 import type { SQLiteColumn } from '~/sqlite-core/columns/index.ts';
 import type { SQLiteTable, SQLiteTableWithColumns } from '~/sqlite-core/table.ts';
 import type { Assume, ValidateShape } from '~/utils.ts';
@@ -61,6 +61,7 @@ export interface SQLiteSelectConfig {
 	joins?: SQLiteSelectJoinConfig[];
 	orderBy?: (SQLiteColumn | SQL | SQL.Aliased)[];
 	groupBy?: (SQLiteColumn | SQL | SQL.Aliased)[];
+	windows?: NamedWindow[];
 	distinct?: boolean;
 	setOperators: {
 		rightSelect: TypedQueryBuilder<any, any>;
@@ -207,7 +208,8 @@ export type SQLiteSetOperatorExcludedMethods =
 	| 'fullJoin'
 	| 'where'
 	| 'having'
-	| 'groupBy';
+	| 'groupBy'
+	| 'window';
 
 export type CreateSQLiteSelectFromBuilderMode<
 	TBuilderMode extends 'db' | 'qb',
