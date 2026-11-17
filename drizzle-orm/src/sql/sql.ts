@@ -71,6 +71,25 @@ export function isSQLWrapper(value: unknown): value is SQLWrapper {
 	return value !== null && value !== undefined && typeof (value as any).getSQL === 'function';
 }
 
+/**
+ * Inline window definition for {@link SQL.over}.
+ *
+ * ## Examples
+ *
+ * ```ts
+ * // Rank employees within each department by salary
+ * db.select({
+ * 	rank: rank().over({ partitionBy: employees.department, orderBy: desc(employees.salary) }),
+ * }).from(employees);
+ * ```
+ */
+export interface WindowSpec {
+	/** Columns or expressions to partition the window by. */
+	partitionBy?: SQLWrapper | SQLWrapper[];
+	/** Columns or expressions to order the window by, e.g. `asc(col)` or `desc(col)`. */
+	orderBy?: SQLWrapper | SQLWrapper[];
+}
+
 function mergeQueries(queries: QueryWithTypings[]): QueryWithTypings {
 	const result: QueryWithTypings = { sql: '', params: [] };
 	for (const query of queries) {
@@ -368,6 +387,59 @@ export class SQL<T = unknown> implements SQLWrapper {
 	 */
 	if(condition: any | undefined): this | undefined {
 		return condition ? this : undefined;
+	}
+
+	/**
+	 * Adds an `over` clause to this expression, turning it into a window function call.
+	 *
+	 * Accepts an inline window definition with `partitionBy` and/or `orderBy`, or the
+	 * name of a window defined elsewhere in the query. Called with no arguments, it
+	 * computes the function over the whole result set.
+	 *
+	 * The base expression is left untouched: each call returns a new `SQL` instance,
+	 * so one base expression can be reused with different windows.
+	 *
+	 * ## Examples
+	 *
+	 * ```ts
+	 * // Number employees within each department by salary
+	 * db.select({
+	 * 	rowNumber: rowNumber().over({ partitionBy: employees.department, orderBy: employees.salary }),
+	 * }).from(employees);
+	 *
+	 * // Running total over the whole result set
+	 * db.select({ total: sum(employees.salary).over() }).from(employees);
+	 *
+	 * // Reference a window defined elsewhere in the query
+	 * db.select({ rowNumber: rowNumber().over('w') }).from(employees);
+	 * ```
+	 */
+	over(): SQL<T>;
+	over(windowName: string): SQL<T>;
+	over(spec: WindowSpec): SQL<T>;
+	over(windowNameOrSpec?: string | WindowSpec): SQL<T> {
+		let overClause: SQL;
+		if (typeof windowNameOrSpec === 'string') {
+			overClause = sql` over ${sql.identifier(windowNameOrSpec)}`;
+		} else {
+			const parts: SQL[] = [];
+			const partitionBy = windowNameOrSpec?.partitionBy;
+			if (partitionBy !== undefined) {
+				const columns = Array.isArray(partitionBy) ? partitionBy : [partitionBy];
+				parts.push(sql`partition by ${sql.join(columns, sql`, `)}`);
+			}
+			const orderBy = windowNameOrSpec?.orderBy;
+			if (orderBy !== undefined) {
+				const columns = Array.isArray(orderBy) ? orderBy : [orderBy];
+				parts.push(sql`order by ${sql.join(columns, sql`, `)}`);
+			}
+			overClause = sql` over (${sql.join(parts, sql` `)})`;
+		}
+
+		const result = new SQL<T>([...this.queryChunks, ...overClause.queryChunks]);
+		result.decoder = this.decoder;
+		result.shouldInlineParams = this.shouldInlineParams;
+		return result;
 	}
 }
 
