@@ -1,7 +1,13 @@
 import { type AnyColumn, Column } from '~/column.ts';
 import { is } from '~/entity.ts';
 import { bindIfParam } from '../expressions/conditions.ts';
-import { type SQL, sql, type SQLWrapper } from '../sql.ts';
+import { type SQL, sql, type SQLWrapper, WindowFrameBound } from '../sql.ts';
+
+function assertNonNegativeInteger(helper: string, arg: string, value: number): void {
+	if (!Number.isInteger(value) || value < 0) {
+		throw new Error(`${helper}() ${arg} must be a non-negative integer, but got ${String(value)}`);
+	}
+}
 
 /**
  * Returns the number of the current row within its partition, starting at 1.
@@ -130,10 +136,12 @@ export function lag<T extends SQLWrapper>(
 	let fn: SQL;
 	if (offset === undefined) {
 		fn = sql`lag(${expression})`;
-	} else if (defaultValue === undefined) {
-		fn = sql`lag(${expression}, ${offset})`;
 	} else {
-		fn = sql`lag(${expression}, ${offset}, ${bindIfParam(defaultValue, expression)})`;
+		assertNonNegativeInteger('lag', 'offset', offset);
+		const inlineOffset = sql.raw(String(offset));
+		fn = defaultValue === undefined
+			? sql`lag(${expression}, ${inlineOffset})`
+			: sql`lag(${expression}, ${inlineOffset}, ${bindIfParam(defaultValue, expression)})`;
 	}
 	return fn.mapWith(is(expression, Column) ? expression : String) as any;
 }
@@ -163,10 +171,12 @@ export function lead<T extends SQLWrapper>(
 	let fn: SQL;
 	if (offset === undefined) {
 		fn = sql`lead(${expression})`;
-	} else if (defaultValue === undefined) {
-		fn = sql`lead(${expression}, ${offset})`;
 	} else {
-		fn = sql`lead(${expression}, ${offset}, ${bindIfParam(defaultValue, expression)})`;
+		assertNonNegativeInteger('lead', 'offset', offset);
+		const inlineOffset = sql.raw(String(offset));
+		fn = defaultValue === undefined
+			? sql`lead(${expression}, ${inlineOffset})`
+			: sql`lead(${expression}, ${inlineOffset}, ${bindIfParam(defaultValue, expression)})`;
 	}
 	return fn.mapWith(is(expression, Column) ? expression : String) as any;
 }
@@ -239,5 +249,103 @@ export function nthValue<T extends SQLWrapper>(
 	expression: T,
 	n: number,
 ): SQL<(T extends AnyColumn ? T['_']['data'] : string) | null> {
-	return sql`nth_value(${expression}, ${n})`.mapWith(is(expression, Column) ? expression : String) as any;
+	assertNonNegativeInteger('nthValue', 'n', n);
+	return sql`nth_value(${expression}, ${sql.raw(String(n))})`.mapWith(
+		is(expression, Column) ? expression : String,
+	) as any;
+}
+
+/**
+ * Frame bound matching the first row of the partition, for use as `from` or `to`
+ * in an {@link SQL.over} frame.
+ *
+ * ## Examples
+ *
+ * ```ts
+ * // Running total: everything from the first row up to the current one
+ * sum(employees.salary).over({
+ * 	orderBy: employees.id,
+ * 	frame: { mode: 'rows', from: unboundedPreceding(), to: currentRow() },
+ * });
+ * ```
+ */
+export function unboundedPreceding(): WindowFrameBound {
+	return new WindowFrameBound('unbounded preceding');
+}
+
+/**
+ * Frame bound matching the row `offset` rows before the current row, for use as
+ * `from` or `to` in an {@link SQL.over} frame.
+ *
+ * `offset` must be a non-negative integer; negative or decimal values throw.
+ *
+ * ## Examples
+ *
+ * ```ts
+ * // Moving average over the previous, current and next row
+ * avg(employees.salary).over({
+ * 	orderBy: employees.id,
+ * 	frame: { mode: 'rows', from: preceding(1), to: following(1) },
+ * });
+ * ```
+ */
+export function preceding(offset: number): WindowFrameBound {
+	assertNonNegativeInteger('preceding', 'offset', offset);
+	return new WindowFrameBound('preceding', offset);
+}
+
+/**
+ * Frame bound matching the current row, for use as `from` or `to` in an
+ * {@link SQL.over} frame.
+ *
+ * ## Examples
+ *
+ * ```ts
+ * sum(employees.salary).over({
+ * 	orderBy: employees.id,
+ * 	frame: { mode: 'rows', from: unboundedPreceding(), to: currentRow() },
+ * });
+ * ```
+ */
+export function currentRow(): WindowFrameBound {
+	return new WindowFrameBound('current row');
+}
+
+/**
+ * Frame bound matching the row `offset` rows after the current row, for use as
+ * `from` or `to` in an {@link SQL.over} frame.
+ *
+ * `offset` must be a non-negative integer; negative or decimal values throw.
+ *
+ * ## Examples
+ *
+ * ```ts
+ * // Moving average over the previous, current and next row
+ * avg(employees.salary).over({
+ * 	orderBy: employees.id,
+ * 	frame: { mode: 'rows', from: preceding(1), to: following(1) },
+ * });
+ * ```
+ */
+export function following(offset: number): WindowFrameBound {
+	assertNonNegativeInteger('following', 'offset', offset);
+	return new WindowFrameBound('following', offset);
+}
+
+/**
+ * Frame bound matching the last row of the partition, for use as `from` or `to`
+ * in an {@link SQL.over} frame.
+ *
+ * ## Examples
+ *
+ * ```ts
+ * // Whole-partition total regardless of ordering
+ * sum(employees.salary).over({
+ * 	orderBy: employees.id,
+ * 	frame: { mode: 'rows', from: unboundedPreceding(), to: unboundedFollowing() },
+ * });
+ * ```
+ */
+export function unboundedFollowing(): WindowFrameBound {
+	return new WindowFrameBound('unbounded following');
 }

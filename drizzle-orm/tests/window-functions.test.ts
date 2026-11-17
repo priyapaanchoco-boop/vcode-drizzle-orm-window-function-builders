@@ -5,15 +5,20 @@ import { eq } from '~/sql/expressions/conditions';
 import { avg, count, max, min, sum } from '~/sql/functions/aggregate';
 import {
 	cumeDist,
+	currentRow,
 	denseRank,
 	firstValue,
+	following,
 	lag,
 	lastValue,
 	lead,
 	nthValue,
 	percentRank,
+	preceding,
 	rank,
 	rowNumber,
+	unboundedFollowing,
+	unboundedPreceding,
 } from '~/sql/functions/window';
 import { asc, desc } from '~/sql/expressions/select';
 
@@ -65,17 +70,17 @@ test('lag and lead with offset and default', () => {
 		prev: lag(employees.salary, 1).over({ partitionBy: employees.department, orderBy: employees.id }),
 	}).from(employees).toSQL();
 	expect(lagQuery.sql).toBe(
-		'select lag("salary", $1) over (partition by "employees"."department" order by "employees"."id") from "employees"',
+		'select lag("salary", 1) over (partition by "employees"."department" order by "employees"."id") from "employees"',
 	);
-	expect(lagQuery.params).toEqual([1]);
+	expect(lagQuery.params).toEqual([]);
 
 	const leadQuery = qb.select({
 		next: lead(employees.salary, 2, 0).over({ orderBy: [asc(employees.id), desc(employees.salary)] }),
 	}).from(employees).toSQL();
 	expect(leadQuery.sql).toBe(
-		'select lead("salary", $1, $2) over (order by "employees"."id" asc, "employees"."salary" desc) from "employees"',
+		'select lead("salary", 2, $1) over (order by "employees"."id" asc, "employees"."salary" desc) from "employees"',
 	);
-	expect(leadQuery.params).toEqual([2, 0]);
+	expect(leadQuery.params).toEqual([0]);
 });
 
 test('first_value, last_value and nth_value', () => {
@@ -95,9 +100,9 @@ test('first_value, last_value and nth_value', () => {
 		v: nthValue(employees.salary, 2).over({ partitionBy: employees.department, orderBy: employees.id }),
 	}).from(employees).toSQL();
 	expect(nthQuery.sql).toBe(
-		'select nth_value("salary", $1) over (partition by "employees"."department" order by "employees"."id") from "employees"',
+		'select nth_value("salary", 2) over (partition by "employees"."department" order by "employees"."id") from "employees"',
 	);
-	expect(nthQuery.params).toEqual([2]);
+	expect(nthQuery.params).toEqual([]);
 });
 
 test('aggregate window functions: sum, avg, min, max, count', () => {
@@ -157,9 +162,105 @@ test('window functions keep table prefixes when joining', () => {
 		prev: lag(employees.salary, 1).over({ partitionBy: employees.department, orderBy: employees.id }),
 	}).from(employees).leftJoin(departments, eq(employees.department, departments.name)).toSQL();
 	expect(query.sql).toBe(
-		'select lag("employees"."salary", $1) over (partition by "employees"."department" order by "employees"."id") from "employees" left join "departments" on "employees"."department" = "departments"."name"',
+		'select lag("employees"."salary", 1) over (partition by "employees"."department" order by "employees"."id") from "employees" left join "departments" on "employees"."department" = "departments"."name"',
 	);
-	expect(query.params).toEqual([1]);
+	expect(query.params).toEqual([]);
+});
+
+test('rows frame between unbounded preceding and current row', () => {
+	expect(
+		selectToSQL({
+			total: sum(employees.salary).over({
+				partitionBy: employees.department,
+				orderBy: employees.id,
+				frame: { mode: 'rows', from: unboundedPreceding(), to: currentRow() },
+			}),
+		}),
+	).toBe(
+		'select sum("salary") over (partition by "employees"."department" order by "employees"."id" rows between unbounded preceding and current row) from "employees"',
+	);
+});
+
+test('frame with preceding and following offsets', () => {
+	expect(
+		selectToSQL({
+			avg: avg(employees.salary).over({
+				orderBy: employees.id,
+				frame: { mode: 'rows', from: preceding(1), to: following(1) },
+			}),
+		}),
+	).toBe(
+		'select avg("salary") over (order by "employees"."id" rows between 1 preceding and 1 following) from "employees"',
+	);
+
+	expect(
+		selectToSQL({
+			total: sum(employees.salary).over({
+				orderBy: employees.id,
+				frame: { mode: 'range', from: unboundedPreceding(), to: unboundedFollowing() },
+			}),
+		}),
+	).toBe(
+		'select sum("salary") over (order by "employees"."id" range between unbounded preceding and unbounded following) from "employees"',
+	);
+});
+
+test('zero offsets are inlined as literals', () => {
+	expect(
+		selectToSQL({ v: lag(employees.salary, 0).over({ orderBy: employees.id }) }),
+	).toBe('select lag("salary", 0) over (order by "employees"."id") from "employees"');
+
+	expect(
+		selectToSQL({
+			v: firstValue(employees.salary).over({
+				orderBy: employees.id,
+				frame: { mode: 'rows', from: preceding(0), to: currentRow() },
+			}),
+		}),
+	).toBe(
+		'select first_value("salary") over (order by "employees"."id" rows between 0 preceding and current row) from "employees"',
+	);
+});
+
+test('count with no expression is count(*)', () => {
+	expect(selectToSQL({ c: count() })).toBe('select count(*) from "employees"');
+	expect(selectToSQL({ c: count().over() })).toBe('select count(*) over () from "employees"');
+});
+
+test('frame bound offsets must be non-negative integers', () => {
+	expect(() => preceding(-1)).toThrowError(/preceding.*non-negative integer.*-1/);
+	expect(() => preceding(1.5)).toThrowError(/preceding.*non-negative integer.*1\.5/);
+	expect(() => following(-2)).toThrowError(/following.*non-negative integer.*-2/);
+	expect(() => following(0.5)).toThrowError(/following.*non-negative integer.*0\.5/);
+});
+
+test('frame from must not be after to', () => {
+	expect(() =>
+		rowNumber().over({
+			orderBy: employees.id,
+			frame: { mode: 'rows', from: currentRow(), to: preceding(1) },
+		})
+	).toThrowError(/from.*after.*to/);
+
+	expect(() =>
+		rowNumber().over({
+			orderBy: employees.id,
+			frame: { mode: 'rows', from: following(5), to: following(1) },
+		})
+	).toThrowError(/from.*after.*to/);
+
+	expect(() =>
+		rowNumber().over({
+			orderBy: employees.id,
+			frame: { mode: 'rows', from: unboundedFollowing(), to: unboundedPreceding() },
+		})
+	).toThrowError(/from.*after.*to/);
+});
+
+test('lag, lead and nth_value numbers must be non-negative integers', () => {
+	expect(() => lag(employees.salary, -1)).toThrowError(/lag.*non-negative integer/);
+	expect(() => lead(employees.salary, 1.5)).toThrowError(/lead.*non-negative integer/);
+	expect(() => nthValue(employees.salary, -2)).toThrowError(/nthValue.*non-negative integer/);
 });
 
 test('over does not mutate the base expression', () => {

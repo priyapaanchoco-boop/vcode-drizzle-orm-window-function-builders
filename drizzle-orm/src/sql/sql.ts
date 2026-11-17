@@ -88,6 +88,102 @@ export interface WindowSpec {
 	partitionBy?: SQLWrapper | SQLWrapper[];
 	/** Columns or expressions to order the window by, e.g. `asc(col)` or `desc(col)`. */
 	orderBy?: SQLWrapper | SQLWrapper[];
+	/** Frame clause limiting which rows of the partition the function sees. */
+	frame?: WindowFrame;
+}
+
+/**
+ * Window frame mode: `rows` counts physical rows, `range` counts peer rows.
+ */
+export type WindowFrameMode = 'rows' | 'range';
+
+/**
+ * One end of a window frame (the `from` or the `to` bound).
+ *
+ * Create instances with the bound helpers `unboundedPreceding()`, `preceding(n)`,
+ * `currentRow()`, `following(n)` and `unboundedFollowing()` instead of constructing
+ * this class directly.
+ */
+export class WindowFrameBound implements SQLWrapper {
+	static readonly [entityKind]: string = 'WindowFrameBound';
+
+	/** @internal */
+	readonly kind:
+		| 'unbounded preceding'
+		| 'preceding'
+		| 'current row'
+		| 'following'
+		| 'unbounded following';
+	/** @internal Offset for `preceding`/`following` bounds. */
+	readonly offset: number;
+
+	/** @internal Use the bound helpers instead of constructing this directly. */
+	constructor(kind: WindowFrameBound['kind'], offset = 0) {
+		this.kind = kind;
+		this.offset = offset;
+	}
+
+	getSQL(): SQL {
+		switch (this.kind) {
+			case 'preceding':
+				return sql`${sql.raw(String(this.offset))} preceding`;
+			case 'following':
+				return sql`${sql.raw(String(this.offset))} following`;
+			default:
+				return sql.raw(this.kind);
+		}
+	}
+}
+
+/**
+ * Window frame clause: a mode plus the `from` and `to` bounds.
+ *
+ * ## Examples
+ *
+ * ```ts
+ * // Running total within each department
+ * db.select({
+ * 	total: sum(employees.salary).over({
+ * 		partitionBy: employees.department,
+ * 		orderBy: employees.id,
+ * 		frame: { mode: 'rows', from: unboundedPreceding(), to: currentRow() },
+ * 	}),
+ * }).from(employees);
+ * ```
+ */
+export interface WindowFrame {
+	/** Frame mode: `rows` counts physical rows, `range` counts peer rows. */
+	mode: WindowFrameMode;
+	/** Frame start bound. Must not be after `to`. */
+	from: WindowFrameBound;
+	/** Frame end bound. */
+	to: WindowFrameBound;
+}
+
+function frameBoundOrder(bound: WindowFrameBound): [number, number] {
+	switch (bound.kind) {
+		case 'unbounded preceding':
+			return [0, 0];
+		case 'preceding':
+			return [1, -bound.offset];
+		case 'current row':
+			return [2, 0];
+		case 'following':
+			return [3, bound.offset];
+		case 'unbounded following':
+			return [4, 0];
+	}
+}
+
+function describeWindowFrameBound(bound: WindowFrameBound): string {
+	switch (bound.kind) {
+		case 'preceding':
+			return `${bound.offset} preceding`;
+		case 'following':
+			return `${bound.offset} following`;
+		default:
+			return bound.kind;
+	}
 }
 
 function mergeQueries(queries: QueryWithTypings[]): QueryWithTypings {
@@ -412,6 +508,14 @@ export class SQL<T = unknown> implements SQLWrapper {
 	 *
 	 * // Reference a window defined elsewhere in the query
 	 * db.select({ rowNumber: rowNumber().over('w') }).from(employees);
+	 *
+	 * // Moving average over the previous, current and next row
+	 * db.select({
+	 * 	avg: avg(employees.salary).over({
+	 * 		orderBy: employees.id,
+	 * 		frame: { mode: 'rows', from: preceding(1), to: following(1) },
+	 * 	}),
+	 * }).from(employees);
 	 * ```
 	 */
 	over(): SQL<T>;
@@ -432,6 +536,23 @@ export class SQL<T = unknown> implements SQLWrapper {
 			if (orderBy !== undefined) {
 				const columns = Array.isArray(orderBy) ? orderBy : [orderBy];
 				parts.push(sql`order by ${sql.join(columns, sql`, `)}`);
+			}
+			const frame = windowNameOrSpec?.frame;
+			if (frame !== undefined) {
+				const { mode, from, to } = frame;
+				if (mode !== 'rows' && mode !== 'range') {
+					throw new Error(`over() frame mode must be 'rows' or 'range', but got ${String(mode)}`);
+				}
+				const [fromRank, fromOffset] = frameBoundOrder(from);
+				const [toRank, toOffset] = frameBoundOrder(to);
+				if (fromRank > toRank || (fromRank === toRank && fromOffset > toOffset)) {
+					throw new Error(
+						`over() frame "from" bound (${describeWindowFrameBound(from)}) must not be after the "to" bound (${
+							describeWindowFrameBound(to)
+						})`,
+					);
+				}
+				parts.push(sql`${sql.raw(mode)} between ${from.getSQL()} and ${to.getSQL()}`);
 			}
 			overClause = sql` over (${sql.join(parts, sql` `)})`;
 		}
