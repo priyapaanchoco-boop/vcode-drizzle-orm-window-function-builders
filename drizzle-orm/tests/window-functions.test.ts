@@ -1,5 +1,6 @@
 import { expect, test } from 'vitest';
 
+import * as drizzleOrm from '~/index';
 import { integer, pgTable, QueryBuilder, text } from '~/pg-core';
 import { gelTable, integer as gelInteger, QueryBuilder as GelQueryBuilder, text as gelText } from '~/gel-core';
 import { int as mysqlInt, mysqlTable, QueryBuilder as MySqlQueryBuilder, text as mysqlText } from '~/mysql-core';
@@ -359,6 +360,30 @@ test('window clause renders in every dialect', () => {
 	).toBe(
 		'select row_number() over "w" from "employees" window "w" as (partition by "employees"."department")',
 	);
+});
+
+test('window helpers are exported from the main package', () => {
+	const helpers = [
+		'rowNumber',
+		'rank',
+		'denseRank',
+		'percentRank',
+		'cumeDist',
+		'lag',
+		'lead',
+		'firstValue',
+		'lastValue',
+		'nthValue',
+		'unboundedPreceding',
+		'preceding',
+		'currentRow',
+		'following',
+		'unboundedFollowing',
+	];
+	for (const name of helpers) {
+		expect(typeof (drizzleOrm as Record<string, unknown>)[name]).toBe('function');
+	}
+	expect(typeof drizzleOrm.SQL.prototype.over).toBe('function');
 });
 
 test('over does not mutate the base expression', () => {

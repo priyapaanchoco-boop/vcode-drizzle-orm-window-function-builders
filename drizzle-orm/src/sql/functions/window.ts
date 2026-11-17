@@ -1,4 +1,4 @@
-import { type AnyColumn, Column } from '~/column.ts';
+import { type AnyColumn, Column, type GetColumnData } from '~/column.ts';
 import { is } from '~/entity.ts';
 import { bindIfParam } from '../expressions/conditions.ts';
 import { type SQL, sql, type SQLWrapper, WindowFrameBound } from '../sql.ts';
@@ -131,6 +131,19 @@ export function cumeDist(): SQL<number> {
 export function lag<T extends SQLWrapper>(
 	expression: T,
 	offset?: number,
+): SQL<(T extends AnyColumn ? T['_']['data'] : string) | null>;
+/**
+ * When `defaultValue` is provided, the result keeps the expression's own type without the added
+ * `null`.
+ */
+export function lag<T extends SQLWrapper>(
+	expression: T,
+	offset: number | undefined,
+	defaultValue: T extends AnyColumn ? T['_']['data'] | SQLWrapper : unknown,
+): SQL<T extends AnyColumn ? GetColumnData<T, 'query'> : string>;
+export function lag<T extends SQLWrapper>(
+	expression: T,
+	offset?: number,
 	defaultValue?: T extends AnyColumn ? T['_']['data'] | SQLWrapper : unknown,
 ): SQL<(T extends AnyColumn ? T['_']['data'] : string) | null> {
 	let fn: SQL;
@@ -163,6 +176,19 @@ export function lag<T extends SQLWrapper>(
  *
  * @see lag to look at preceding rows instead
  */
+export function lead<T extends SQLWrapper>(
+	expression: T,
+	offset?: number,
+): SQL<(T extends AnyColumn ? T['_']['data'] : string) | null>;
+/**
+ * When `defaultValue` is provided, the result keeps the expression's own type without the added
+ * `null`.
+ */
+export function lead<T extends SQLWrapper>(
+	expression: T,
+	offset: number | undefined,
+	defaultValue: T extends AnyColumn ? T['_']['data'] | SQLWrapper : unknown,
+): SQL<T extends AnyColumn ? GetColumnData<T, 'query'> : string>;
 export function lead<T extends SQLWrapper>(
 	expression: T,
 	offset?: number,
